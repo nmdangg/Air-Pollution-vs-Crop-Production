@@ -1,0 +1,601 @@
+---
+title: "Project"
+author: "Minh Thi Nhat Dang"
+date: "2023-03-09"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#install.packages("tidyverse", type="binary")
+
+
+```
+
+## Load package
+
+```{r load packages, include=FALSE}
+# Load necessary packages
+library(tidyverse)
+library(UsingR)
+library(ggplot2)
+library(data.table)
+library(reshape2)
+library(RColorBrewer)
+library(psych)#
+library(Matrix)
+library(MPV)#
+library(glmnet)
+library(rms)
+library(MASS)
+library(gglasso)
+library(pls)
+library(psych)
+library(knitr)
+
+
+```
+
+## Load datasets
+
+```{r}
+crop_data <- read.csv("CROP_PRODUCTION.csv")
+emission_data <- read.csv("AIR_EMISSIONS.csv")
+greenhouse_data <- read.csv("GREENHOUSE_GAS.csv")
+```
+
+```{r}
+# Summary of the dataset
+summary(crop_data)
+
+# Structure of dataset
+str(crop_data)
+
+summary(emission_data)
+str(emission_data)
+
+
+summary(greenhouse_data)
+str(greenhouse_data)
+
+```
+
+```{r}
+#clean cols to merge
+crop_data <- crop_data %>%  rename("COU" = "LOCATION", "YEA" = "TIME") %>% filter(!str_detect("THND_TONNE", MEASURE)) %>% filter(!str_detect("THND_HA", MEASURE))
+crop_data2 <- dcast(crop_data, COU + YEA ~ SUBJECT, value.var = "Value", fill = 0)
+
+#filter out the total man made emission
+emission_data <- filter(emission_data, VAR == 'TOT')
+
+emission_data <- emission_data %>% group_by(COU, YEA, POL) %>% summarise(Value = sum(Value))
+emission_data2 <- dcast(emission_data, COU + YEA ~ POL, value.var = "Value", fill = 0) %>%  rename("PM25" = "PM2-5")
+
+
+
+greenhouse_data2 <- filter(greenhouse_data, VAR == 'TOTAL') 
+
+greenhouse_data2 <- greenhouse_data2 %>% group_by(COU, YEA, POL) 
+greenhouse_data2 <- dcast(greenhouse_data2, COU + YEA ~ POL, value.var = "Value", fill = 0)
+
+```
+
+```{r}
+#merge
+joint_data_a <- merge(emission_data2, greenhouse_data2, by = c("COU", "YEA"))
+joint_data <- merge(joint_data_a, crop_data2, by = c("COU", "YEA")) %>% filter(!str_detect("OECD", COU)) 
+joint_data$Total_crop <- rowSums(joint_data[,18:21])
+joint_data2012 <- subset(joint_data, YEA >= 2012 & YEA <= 2019) 
+
+joint_data2012
+
+```
+
+```{r descriptive statistics}
+# Summary of the dataset
+summary(joint_data2012)
+
+# Structure of dataset
+str(joint_data2012)
+
+```
+
+```{r}
+
+corr_matrix <- cor(joint_data2012[, 3:17])
+melted_correlation <- reshape2::melt(corr_matrix)
+
+ggplot(data = melted_correlation) + 
+  geom_tile(aes(x = Var1, y = Var2, fill = value)) +
+  scale_fill_gradient2(low = "blue", high = "red", midpoint = 0, name = "Correlation") +
+  labs(title = "Correlation heatmap", subtitle = "Variables from joint dataset") +
+  xlab("Variable 1") + ylab("Variable 2") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        axis.text.y = element_text(angle = 0, vjust = 0.5, hjust=1),
+        panel.background = element_rect(fill = "white"),
+        panel.grid.major = element_line(colour = "gray90"),
+        panel.grid.minor = element_blank(),
+        legend.title = element_blank(),
+        legend.key.width = unit(1, "cm"),
+        legend.key.height = unit(0.5, "cm"),
+        legend.text = element_text(size = 10),
+        plot.title = element_text(size = 18, face = "bold"))
+```
+
+```{r}
+n_countries <- length(unique(joint_data2012$COU))
+hue_seq <- seq(15, 375, length.out = n_countries + 1)[-1]
+palette <- hcl(h = hue_seq, c = 100, l = 65)
+
+par(mfrow = c(3,2))
+
+cor_coef <- cor(joint_data2012$SOX, joint_data2012$Total_crop)
+scatter_plot <- ggplot(joint_data2012, aes(x = SOX, y = Total_crop, color = COU)) +
+  geom_point() +
+  labs(title = "Scatter plot of SOX and crop production", 
+       x = "SOX", y = "Crop production", 
+       subtitle = paste("Data from the joint dataset, correlation = ", round(cor_coef, 2)))
+scatter_plot
+
+cor_coef <- cor(joint_data2012$CO, joint_data2012$Total_crop)
+scatter_plot <- ggplot(joint_data2012, aes(x = CO, y = Total_crop, color = COU)) +
+  geom_point() +
+  labs(title = "Scatter plot of CO and crop production", 
+       x = "CO ", y = "Total crop production", 
+       subtitle = paste("Data from the joint dataset, correlation = ", round(cor_coef, 2)))
+scatter_plot
+
+cor_coef <- cor(joint_data2012$SOX, joint_data2012$Total_crop)
+scatter_plot <- ggplot(joint_data2012, aes(x = NOX, y = Total_crop, color = COU)) +
+  geom_point() +
+  labs(title = "Scatter plot of NOX and crop production", 
+       x = "NOX", y = "Crop production ", 
+       subtitle = paste("Data from the joint dataset, correlation = ", round(cor_coef, 2)))
+scatter_plot
+
+cor_coef <- cor(joint_data2012$NMVOC, joint_data2012$Total_crop)
+scatter_plot <- ggplot(joint_data2012, aes(x = NMVOC, y = Total_crop, color = COU)) +
+  geom_point() +
+  labs(title = "Scatter plot of NMVOC and crop production", 
+       x = "NMVOC", y = "Crop production", 
+       subtitle = paste("Data from the joint dataset, correlation = ", round(cor_coef, 2)))
+scatter_plot
+
+cor_coef <- cor(joint_data2012$GHG, joint_data2012$Total_crop)
+scatter_plot <- ggplot(joint_data2012, aes(x = GHG, y = Total_crop, color = COU)) +
+  geom_point() +
+    scale_color_manual(values = palette) +
+  labs(title = "Scatter plot of GHG and crop production", 
+       x = "GHG", y = "Crop production (tonnes)", 
+       subtitle = paste("Data from the joint dataset, correlation = ", round(cor_coef, 2)))
+scatter_plot
+
+cor_coef <- cor(joint_data2012$CO2, joint_data2012$Total_crop)
+
+scatter_plot <- ggplot(joint_data2012, aes(x = CO2, y = Total_crop, color = COU)) +
+  geom_point() +
+    scale_color_manual(values = palette) +
+  labs(title = "Scatter plot of CO2 and crop production", 
+       x = "CO2", y = "Crop production ", 
+       subtitle = paste("Data from the joint dataset, correlation = ", round(cor_coef, 2)))
+scatter_plot
+
+cor_coef <- cor(joint_data2012$CH4, joint_data2012$Total_crop)
+scatter_plot <- ggplot(joint_data2012, aes(x = CH4, y = Total_crop, color = COU)) +
+  geom_point() +
+    scale_color_manual(values = palette) +
+  labs(title = "Scatter plot of CH4 and crop production", 
+       x = "CH4", y = "Crop production ", 
+       subtitle = paste("Data from the joint dataset, correlation = ", round(cor_coef, 2)))
+
+scatter_plot
+
+cor_coef <- cor(joint_data2012$SF6, joint_data2012$Total_crop)
+scatter_plot <- ggplot(joint_data2012, aes(x = SF6, y = Total_crop, color = COU)) +
+  geom_point() +
+    scale_color_manual(values = palette) +
+  labs(title = "Scatter plot of SF6 and crop production", 
+       x = "SF6", y = "Crop production ", 
+       subtitle = paste("Data from the joint dataset, correlation = ", round(cor_coef, 2)))
+
+scatter_plot
+
+cor_coef <- cor(joint_data2012$NF3, joint_data2012$Total_crop)
+scatter_plot <- ggplot(joint_data2012, aes(x = NF3, y = Total_crop, color = COU)) +
+  geom_point() +
+    scale_color_manual(values = palette) +
+  labs(title = "Scatter plot of NF3 and crop production", 
+       x = "NF3", y = "Crop production ", 
+       subtitle = paste("Data from the joint dataset, correlation = ", round(cor_coef, 2)))
+
+scatter_plot
+
+cor_coef <- cor(joint_data2012$HFC, joint_data2012$Total_crop)
+scatter_plot <- ggplot(joint_data2012, aes(x = HFC, y = Total_crop, color = COU)) +
+  geom_point() +
+    scale_color_manual(values = palette) +
+  labs(title = "Scatter plot of HFC and crop production", 
+       x = "HFC", y = "Crop production ", 
+       subtitle = paste("Data from the joint dataset, correlation = ", round(cor_coef, 2)))
+
+scatter_plot
+```
+
+```{r}
+
+ggplot(joint_data, aes(x = YEA, y = SOX, fill = COU)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Graph of Sulfur Oxides for each country", 
+       x = "Country", y = "Sulfur Oxides (tonnes)")
+
+ggplot(joint_data2012, aes(x = COU, y = SOX, fill = COU)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Graph of Sulfur Oxides for each country", 
+       x = "Country", y = "Sulfur Oxides (tonnes)")
+
+ggplot(joint_data2012, aes(x = COU, y = CO, fill = COU)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Graph of Carbon Monoxides for each country", 
+       x = "Country", y = "Carbon Monoxides (tonnes)")
+
+ggplot(joint_data2012, aes(x = COU, y = NOX, fill = COU)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Graph of Nitrogen Oxides for each country", 
+       x = "Country", y = "Nitrogen Oxides (tonnes)")
+
+ggplot(joint_data2012, aes(x = COU, y = NMVOC, fill = COU)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Graph of NMVOC for each country", 
+       x = "Country", y = "NNVOC (tonnes)")
+
+ggplot(joint_data2012, aes(x = COU, y = PM10, fill = COU)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Graph of PM 10 for each country", 
+       x = "Country", y = "PM 10 (tonnes)")
+
+ggplot(joint_data2012, aes(x = COU, y = PM25, fill = COU)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Graph of PM 2.5 for each country", 
+       x = "Country", y = "PM 2.5 (tonnes)")
+
+```
+
+```{r}
+hist_plot1 <- ggplot(joint_data2012, aes(x = PM10)) +
+  geom_histogram(fill = "grey", color = "black") +
+  labs(title = "Histogram of SULFUR OXIDES", x = "SULFUR OXIDES", y = "Number of measurement") + 
+  theme_classic() 
+
+hist_plot2 <- ggplot(joint_data2012, aes(x = SOX)) +
+  geom_histogram(fill = "palegreen4", color = "white") +
+  labs(title = "Histogram of SULFUR OXIDES", x = "SULFUR OXIDES (Tonnes)", y = "Number of measurement") + 
+  theme_classic() 
+hist_plot2
+
+
+hist_plot3 <- ggplot(joint_data2012, aes(x = CO)) +
+  geom_histogram(fill = "palegreen4", color = "white") +
+  labs(title = "Histogram of CARBON MONOXIDE", x = "CARBON MONOXIDE (Tonnes)", y = "Number of measurement") + 
+  theme_classic() 
+hist_plot3
+
+hist_plot4 <- ggplot(joint_data2012, aes(x = NOX)) +
+  geom_histogram(fill = "palegreen4", color = "white") +
+  labs(title = "Histogram of NITROGEN OXIDES", x = "NITROGEN OXIDES (Tonnes)", y = "Number of measurement") + 
+  theme_classic()
+hist_plot4
+
+hist_plot4 <- ggplot(joint_data2012, aes(x = NMVOC)) +
+  geom_histogram(fill = "palegreen4", color = "white") +
+  labs(title = "Histogram of NMVOC", x = "NMVOC (Tonnes)", y = "Number of measurement") + 
+  theme_classic()
+hist_plot4
+
+hist_plot4 <- ggplot(joint_data2012, aes(x = CO2)) +
+  geom_histogram(fill = "palegreen4", color = "white") +
+  labs(title = "Histogram of CO2", x = "CO2(Tonnes)", y = "Number of measurement") + 
+  theme_classic()
+hist_plot4
+
+hist_plot4 <- ggplot(joint_data2012, aes(x = CH4)) +
+  geom_histogram(fill = "palegreen4", color = "white") +
+  labs(title = "Histogram of CH4", x = "CH4 (Tonnes)", y = "Number of measurement") + 
+  theme_classic()
+hist_plot4
+
+hist_plot <- ggplot(joint_data2012, aes(x = Total_crop)) +
+  geom_histogram(fill = "grey", color = "black") +
+  labs(title = "Histogram of Total crop", x = "Total crop production (tonnes)", y = "Number of measurement") + 
+  theme_classic() 
+hist_plot
+
+```
+
+
+```{r}
+n_countries <- length(unique(joint_data2012$COU))
+hue_seq <- seq(15, 375, length.out = n_countries + 1)[-1]
+palette <- hcl(h = hue_seq, c = 100, l = 65)
+
+  ggplot(joint_data, aes(x = YEA, y = Total_crop, fill = COU)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Graph of total crop production for each country", 
+       x = "Country", y = "Total crop production (tonnes)")
+  
+  ggplot(joint_data2012, aes(x = COU, y = RICE, fill = COU)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Graph of RICE production for each country", 
+       x = "Country", y = "RICE (tonnes)")
+
+  ggplot(joint_data2012, aes(x = COU, y = MAIZE, fill = COU)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Graph of MAIZE production for each country", 
+       x = "Country", y = "MAIZE (tonnes)")
+
+  
+ggplot(joint_data2012, aes(x = COU, y = SOYBEAN, fill = COU)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Graph of SOYBEAN production for each country", 
+       x = "Country", y = "SOYBEAN (tonnes)")
+
+ggplot(joint_data2012, aes(x = COU, y = WHEAT, fill = COU)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Graph of wheat production for each country", 
+       x = "Country", y = "Wheat (tonnes)")
+
+ggplot(joint_data2012, aes(x = COU, y = Total_crop, fill = COU)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Graph of total crop production for each country", 
+       x = "Country", y = "Total crop (tonnes)")
+
+```
+
+```{r}
+#model without splitting data
+model <- lm(Total_crop ~ .,joint_data2012[, -c(1,2,6,7,13,15,18:21)])
+
+r1 <- rstudent(model) #standadized residuals
+fitted <- predict(model)
+summary(model)
+
+### Plot the standardized residuals
+
+p <- ggplot(joint_data2012, aes(sample = r1)) + ggtitle("QQ Plot") + theme_minimal() 
+p + stat_qq() + stat_qq_line() 
+
+residuals <- residuals(model)
+
+# Plot the residuals
+plot(residuals, xlab = "Response", ylab = "Residuals", main = "Residual Plot") %>% abline(h = 0, col = "red")
+plot(r1, xlab = "Response", ylab = "Residuals", main = "Standardize Residual Plot") %>% abline(h = 0, col = "red")
+
+#plot each residuals against the predictor
+```
+```{r}
+#model with spiting data 70, 30
+set.seed(123)
+
+# Create vector of row indices
+row_indices <- 1:nrow(joint_data2012[, -c(6,7,13,15,18:21)])
+
+# Randomly assign row indices to training and testing sets
+train_indices <- sample(row_indices, round(0.7 * nrow(joint_data2012[, -c(6,7,13,15,18:21)])), replace = FALSE)
+test_indices <- setdiff(row_indices, train_indices)
+
+# Create training and testing data frames
+train_df <- joint_data2012[, -c(6,7,13,15,18:21)][train_indices, ]
+test_df <- joint_data2012[, -c(6,7,13,15,18:21)][test_indices, ]
+
+model <- lm(Total_crop ~ .,data = train_df[,-c(1,2,22)])
+
+r1 <- rstudent(model) #standardized residuals
+summary(model)
+
+
+fitted <- predict(model, newdata = test_df, type = "response")
+mean((test_df$Total_crop - pred.y)^2)
+
+# Plot the residuals
+
+par(mfrow = c(1,2))
+p <- ggplot(train_df, aes(sample = r1)) + ggtitle("QQ Plot") + theme_minimal() 
+p + stat_qq() + stat_qq_line() 
+
+plot(r1, xlab = "Response Value", ylab = "Residuals", main = "Standardized Residual Plot") %>% abline(h = 0, col = "red")
+
+# Response vs Fitted values ##
+plot(x = test_df$Total_crop, y = fitted, xlab = "Dependent variable", ylab = "Fitted values", main = "Fitted values vs. dependent variable")
+
+```
+
+
+```{r}
+## Calculate h_ii, leverage point ## 
+h <- hatvalues(model)
+thresh <- 2 * (dim(model.matrix(model))[2])/nrow(joint_data2012)
+w <- which(h > thresh)
+joint_data2012[w,]
+ 
+## Cook's distant ##
+D <- cooks.distance(model)
+d <-  which(D > qf(0.5, 5, nrow(joint_data2012)-5))
+joint_data2012[d,]
+
+## DFFITS ##
+dfits <- dffits(model)
+dfit <- which(abs(dfits) > 2*sqrt(5/nrow(joint_data2012)))
+joint_data2012[dfit,]
+
+## DFBETAS ##
+dfb <- dfbetas(model)
+df <- which(abs(dfb[,2]) > 2/sqrt(nrow(joint_data2012)))
+joint_data2012[df,]
+
+```
+
+
+```{r}
+#now check the correlation of each predictor
+
+vif(model)
+
+```
+
+```{r}
+# LASSO SELECTION
+model.lasso <- glmnet(x = as.matrix(train_df[,-c(1,2,14)]), y = train_df$Total_crop, standardize = T, alpha = 1)
+## Perform Prediction ##
+pred.y.lasso <- predict(model.lasso, newx = as.matrix(test_df[, -c(1,2,14)]), type = "response")
+
+## Prediction error ##
+mean((test_df$Total_crop - pred.y.lasso)^2)
+
+anova(model, model.lasso)
+```
+
+```{r}
+####### Variable selection #######
+
+## Step wise regression ###
+
+## Based on AIC ##
+n <- nrow(train_df)
+sel.var.aic <- step(model, trace = 0, k = 2, direction = "both") 
+sel.var.aic<-attr(terms(sel.var.aic), "term.labels")   
+sel.var.aic
+
+## Based on BIC ##
+  
+n <- nrow(train_df)
+sel.var.bic <- step(model, trace = 0, k = log(n), direction = "both") 
+sel.var.bic <-attr(terms(sel.var.bic), "term.labels")   
+sel.var.bic
+```
+
+
+```{r}
+### LASSO selection ###
+## Perform cross validation to choose lambda ##
+set.seed(88)
+cv.out <- cv.glmnet(x = as.matrix(train_df[,-c(1,2,14)]), y = train_df$Total_crop, standardize = T, alpha = 1)
+plot(cv.out)
+best.lambda <- cv.out$lambda.1se
+best.lambda
+co<-coef(cv.out, s = "lambda.1se")
+
+#Selection of the significant features(predictors)
+
+## threshold for variable selection ##
+
+thresh <- 0.00
+# select variables #
+inds<-which(abs(co) > thresh)
+variables<-row.names(co)[inds]
+sel.var.lasso<-variables[!(variables %in% '(Intercept)')]
+sel.var.lasso
+
+
+### ELASTIC selection ###
+
+## Perform cross validation to choose lambda ##
+cv.out_e <- cv.glmnet(x = as.matrix(train_df[,-c(1,2,14)]), y = train_df$Total_crop, standardize = T, alpha = 0.6)
+plot(cv.out_e)
+best.lambda_e <- cv.out_e$lambda.1se
+best.lambda_e
+co_e<-coef(cv.out_e, s = "lambda.1se")
+
+#Selection of the significant features(predictors)
+
+## threshold for variable selection ##
+
+thresh <- 0.00
+# select variables #
+inds_e<-which(abs(co_e) > thresh )
+variables_e<-row.names(co_e)[inds_e]
+sel.var.EN<-variables_e[!(variables_e %in% '(Intercept)')]
+sel.var.EN
+
+
+
+```
+
+```{r}
+#model validation
+
+### Cross Validation and prediction performance of AIC based selection for train data ###
+set.seed(88)
+ols.aic <- ols(Total_crop ~ ., data = train_df[,which(colnames(train_df) %in% c(sel.var.aic, "Total_crop"))], x=T, y=T, model = T)
+aic <- lm(Total_crop ~ ., data = train_df[,which(colnames(train_df) %in% c(sel.var.aic, "Total_crop"))])
+
+## 10 fold cross validation ##    
+
+aic.cross <- calibrate(ols.aic, method = "crossvalidation", B = 10)
+
+## Calibration plot ##
+plot(aic.cross, las = 1, xlab = "Predicted Total_crop", main = "Cross-Validation calibration with AIC/BIC")
+
+
+## Test Error ##
+pred.aic <- predict(ols.aic, newdata = test_df[,which(colnames(train_df) %in% c(sel.var.aic, "Total_crop"))])
+## Prediction error ##
+pred.error.AIC <- mean((test_df$Total_crop - pred.aic)^2)
+pred.error.AIC
+
+r.aic <- rstudent(aic)
+plot(r.aic, xlab = "Observation Index", ylab = "Residuals", main = "Standardized Residual Plot") %>% abline(h = 0, col = "red")
+
+
+anova(aic, model)
+summary(aic)
+```
+
+
+```{r}
+### Cross Validation and prediction performance of BIC based selection ###
+set.seed(88)
+ols.bic <- ols(Total_crop ~ ., data = train_df[,which(colnames(train_df) %in% c(sel.var.bic, "Total_crop"))], 
+               x=T, y=T, model = T)
+
+## 10 fold cross validation ##
+bic.cross <- calibrate(ols.bic, method = "crossvalidation", B = 10)
+
+## Calibration plot ##
+plot(bic.cross, las = 1, xlab = "Predicted Crop production", main = "Cross-Validation calibration with BIC")
+
+
+## Test Error ##
+pred.bic <- predict(ols.bic, newdata = test_df[,which(colnames(train_df) %in% c(sel.var.aic, "Total_crop"))])
+## Prediction error ##
+pred.error.BIC <- mean((test_df$Total_crop - pred.bic)^2)
+
+
+```
+
+
+```{r}
+### Cross Validation and prediction performance of LASSO based selection ###
+set.seed(88)
+ols.lasso <- ols(Total_crop ~ ., 
+                 data = joint_data2012[, c(sel.var.lasso, "Total_crop")], 
+                 x=T, y=T,model = TRUE)
+
+## 10 fold cross validation ##
+lasso.cross <- calibrate(ols.lasso, method = "crossvalidation", B = 10)
+
+## Calibration plot ##
+plot(lasso.cross, las = 1, xlab = "Predicted crop production", main = "Cross-Validation calibration with LASSO")
+
+
+## Test Error ##
+pred.lasso <- predict(ols.lasso, data = test_df)
+## Prediction error ##
+pred.error.lasso <- mean((test_df$Total_crop - pred.lasso)^2)
+
+
+```
+
+
+
